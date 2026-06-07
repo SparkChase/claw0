@@ -63,14 +63,14 @@ from typing import Any
 from dotenv import load_dotenv
 from anthropic import Anthropic
 
-load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env", override=True)
+load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=True)
 
 MODEL_ID = os.getenv("MODEL_ID", "claude-sonnet-4-20250514")
 client = Anthropic(
     api_key=os.getenv("ANTHROPIC_API_KEY"),
     base_url=os.getenv("ANTHROPIC_BASE_URL") or None,
 )
-WORKSPACE_DIR = Path(__file__).resolve().parent.parent.parent / "workspace"
+WORKSPACE_DIR = Path(__file__).resolve().parent.parent / "workspace"
 AGENTS_DIR = WORKSPACE_DIR / ".agents"
 
 # ---------------------------------------------------------------------------
@@ -863,3 +863,59 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+"""
+
+ 这一节解决的核心问题是：多个平台进来的消息，怎么交给不同的 agent，并且接到正确的上下文？
+
+  第04节解决的是"怎么接多个平台"，到了第05节，问题升级了——同一套入口后面可能不止一个 agent，那每条消息进来需要先回答两个问题：
+
+  1. 这条消息应该交给哪个 agent？（路由问题）
+  2. 这条消息应该接到哪段历史对话？（会话问题）
+
+  ---
+  三个核心概念
+  
+  1. BindingTable（路由表）—— 谁来回答
+
+  五层优先级，从最具体到最宽泛匹配：
+
+  第1层 peer_id     → 某个具体用户指定给某个 agent
+  第2层 guild_id    → 某个服务器/工作区指定给某个 agent
+  第3层 account_id  → 某个 bot 账号指定给某个 agent
+  第4层 channel     → 某个平台指定给某个 agent
+  第5层 default     → 兜底
+
+  举例：配置了"所有 Telegram → sage"，但又单独配了"Telegram 的 admin-001 → luna"，那 admin-001 这条更具体的规则会覆盖平台级规则。
+
+  2. dm_scope（会话隔离）—— 接哪段上下文
+
+  路由选完 agent 之后，还要决定这段对话接到哪个 session。dm_scope 控制隔离粒度——是所有人共享一段历史，还是按用户/平台/bot账号隔离。
+
+  3. Gateway（网关）—— 消息枢纽
+
+  统一入口。不管是 REPL 输入还是 WebSocket 连接，消息都先进 Gateway，再交给路由系统。它对外暴露 JSON-RPC 2.0 接口，远程客户端可以通过 WebSocket 调用 send、bindings.set、agents.list 等方法。
+
+  ---
+  整条数据流
+  
+  消息进来 (channel, peer_id, text)
+         │
+         ▼
+     Gateway ── 接收 REPL 或 WebSocket 的消息
+         │
+         ▼
+    BindingTable ── 五层匹配，选出 agent_id
+         │
+         ▼
+    dm_scope ── 根据该 agent 的隔离策略，构造 session_key
+         │
+         ▼
+    AgentManager ── 取出 agent 配置 + 对应 session 的历史消息
+         │
+         ▼
+      LLM API ── 调用模型，得到回复
+
+  一句话总结：第04节让 agent 能从多个平台收发消息，第05节让多个 agent 共存，每条消息都能找到属于自己的 agent 和上下文。
+
+
+"""
