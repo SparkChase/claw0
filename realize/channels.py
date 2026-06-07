@@ -54,14 +54,14 @@ except ImportError:
 # ---------------------------------------------------------------------------
 # 配置
 # ---------------------------------------------------------------------------
-load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env", override=True)
+load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=True)
 
 MODEL_ID = os.getenv("MODEL_ID", "claude-sonnet-4-20250514")
 client = Anthropic(
     api_key=os.getenv("ANTHROPIC_API_KEY"),
     base_url=os.getenv("ANTHROPIC_BASE_URL") or None,
 )
-WORKSPACE_DIR = Path(__file__).resolve().parent.parent.parent / "workspace"
+WORKSPACE_DIR = Path(__file__).resolve().parent.parent / "workspace"
 WORKSPACE_DIR.mkdir(parents=True, exist_ok=True)
 STATE_DIR = WORKSPACE_DIR / ".state"
 STATE_DIR.mkdir(parents=True, exist_ok=True)
@@ -136,9 +136,8 @@ class ChannelAccount:
     - telegram/tg-primary 使用 TELEGRAM_BOT_TOKEN。
     - feishu/feishu-primary 使用 FEISHU_APP_ID + FEISHU_APP_SECRET。
 
-    account_id 不是用户 id, 而是“我方机器人账号 id”。它用于区分多机器人场景。
-    当前教学版的 session key 还没有把 account_id 放进去; 完整系统通常会放进去,
-    避免同一平台的不同机器人账号共享上下文。
+    account_id 不是用户 id, 而是“我方机器人账号 id”。它用于区分多机器人场景,
+    也会参与 session key, 避免不同机器人账号的上下文串在一起。
     """
     channel: str
     account_id: str
@@ -150,12 +149,8 @@ class ChannelAccount:
 # ---------------------------------------------------------------------------
 
 def build_session_key(channel: str, account_id: str, peer_id: str) -> str:
-    # 会话键把“平台 + 对话对象”串起来。
+    # 会话键把“平台 + 机器人账号 + 对话对象”串起来。
     # 这样 Telegram 用户 A 和飞书用户 A 即使名字/数字 id 相同, 也不会共享上下文。
-    #
-    # account_id 作为参数传进来, 是为了展示完整系统需要考虑“多个 bot 账号”的情况。
-    # 本节为了简单没有把 account_id 纳入 key; 生产版一般会使用
-    # agent:main:{channel}:{account_id}:direct:{peer_id} 这样的格式。
     #
     # 当前教学版固定 agent:main, 后面第05节会加入路由, 让不同 channel/peer
     # 可以被分配给不同 agent。
@@ -984,3 +979,41 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+"""
+ > 我们不是让 Agent 分别理解 Telegram、飞书、CLI。我们在外面加了一层 Channel 适配器。每个平台的消息先被转换成统一的 InboundMessage，Agent 只处理这个统一格式。回复时，再根据消息来源找到对应的 Channel，把回复
+  > 发回原平台。                                                                                                                                                                                               
+
+  更具体一点：
+
+  Telegram update     \
+  飞书 webhook payload  ->  InboundMessage  ->  Agent Loop  ->  Channel.send()
+  CLI input           /
+
+  也就是说，平台差异被关在 Channel 里面。
+
+  比如 Telegram：
+
+  Telegram getUpdates
+      -> TelegramChannel._parse()
+      -> InboundMessage(channel="telegram", peer_id=chat_id, text="...")
+      -> run_agent_turn()
+      -> TelegramChannel.send()
+      -> Telegram sendMessage API
+
+  飞书类似：
+
+  飞书 webhook 事件
+      -> FeishuChannel.parse_event()
+      -> InboundMessage(channel="feishu", peer_id=chat_id, text="...")
+      -> run_agent_turn()
+      -> FeishuChannel.send()
+      -> 飞书 im/v1/messages API
+
+  所以别人问“你们怎么做到对接多个平台的？”你可以回答：
+
+  > 核心是适配器模式。我们定义了一个统一的 Channel 接口，每个平台只需要实现两件事：receive() 把平台消息转成统一格式，send() 把 Agent 回复发回平台。Agent 本身不关心消息来自 Telegram、飞书还是命令行。         
+
+  这份 sessions/zh/s04_channels.py:1 是最小教学版。Telegram 部分配置 token 后是真正能通过 Bot API 拉消息和发消息的；飞书部分展示了解析 webhook 和发送消息的适配逻辑，但这个文件本身没有启动 HTTP webhook
+  server，所以还不是完整线上飞书接入。完整生产版还要加鉴权、重试、限流、持久化、路由等。
+"""
