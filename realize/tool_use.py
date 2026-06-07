@@ -1,55 +1,21 @@
-"""
-Section 02: Tool Use
-"Give the model hands"
-
-Agent 循环本身没变 -- 我们只是加了一张调度表.
-当 stop_reason == "tool_use" 时, 从 TOOL_HANDLERS 查到函数, 执行, 把结果塞回去,
-然后继续循环. 就这么简单.
-
-架构图:
-
-    User --> LLM --> stop_reason == "tool_use"?
-                          |
-                  TOOL_HANDLERS[name](**input)
-                          |
-                  tool_result --> back to LLM
-                          |
-                   stop_reason == "end_turn"?
-                          |
-                       Print
-
-工具清单:
-    - bash        : 执行 shell 命令
-    - read_file   : 读取文件内容
-    - write_file  : 写入文件
-    - edit_file   : 精确替换文件中的文本 (类似 OpenClaw 的 edit 工具)
-
-运行方式:
-    cd claw0
-    python zh/s02_tool_use.py
-
-需要在 .env 中配置:
-    ANTHROPIC_API_KEY=sk-ant-xxxxx
-    MODEL_ID=claude-sonnet-4-20250514
-"""
-
 # ---------------------------------------------------------------------------
 # 导入
 # ---------------------------------------------------------------------------
 import os
 import sys
-import subprocess          # 用于执行 shell 命令 (tool_bash)
+import subprocess
 from pathlib import Path
-from typing import Any     # 用于类型标注 (TOOL_HANDLERS 的值类型)
+from typing import Any
 
 from dotenv import load_dotenv
 from anthropic import Anthropic
+
 
 # ---------------------------------------------------------------------------
 # 配置
 # ---------------------------------------------------------------------------
 
-load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env", override=True)
+load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=True)
 
 MODEL_ID = os.getenv("MODEL_ID", "claude-sonnet-4-20250514")
 client = Anthropic(
@@ -57,11 +23,6 @@ client = Anthropic(
     base_url=os.getenv("ANTHROPIC_BASE_URL") or None,
 )
 
-# 系统提示词: 告诉模型它有工具可用, 以及使用工具的规则
-# 和 s01 相比, 关键区别:
-#   1. 告知模型有工具可用
-#   2. 要求编辑前先读取文件 (防止模型凭记忆编辑, 导致 old_string 不匹配)
-#   3. 强调 old_string 必须精确匹配 (这是 edit_file 的核心约束)
 SYSTEM_PROMPT = (
     "You are a helpful AI assistant with access to tools.\n"
     "Use the tools to help the user with file operations and shell commands.\n"
@@ -112,6 +73,7 @@ def print_info(text: str) -> None:
     print(f"{DIM}{text}{RESET}")
 
 
+
 # ---------------------------------------------------------------------------
 # 安全辅助函数
 # ---------------------------------------------------------------------------
@@ -123,28 +85,6 @@ def print_info(text: str) -> None:
 # 比如用户可能诱导模型读取 /etc/passwd 或执行危险命令.
 # 这些是最低限度的防护, 生产环境需要更多安全措施.
 # ---------------------------------------------------------------------------
-
-
-def safe_path(raw: str) -> Path:
-    """
-    将用户/模型传入的路径解析为安全的绝对路径.
-    防止路径穿越: 最终路径必须在 WORKDIR 之下.
-
-    工作原理:
-        1. 把相对路径拼接到 WORKDIR 下, 然后解析为绝对路径
-           (resolve() 会消除 ".." 和符号链接)
-        2. 检查解析后的路径是否以 WORKDIR 开头
-        3. 如果不是, 说明有人试图用 "../../etc/passwd" 之类逃逸
-
-    示例:
-        raw = "src/main.py"  -> /workspace/src/main.py  ✅ 在 WORKDIR 下
-        raw = "../../../etc/passwd"  -> /etc/passwd  ❌ 不在 WORKDIR 下, 拒绝
-    """
-    target = (WORKDIR / raw).resolve()
-    if not str(target).startswith(str(WORKDIR)):
-        raise ValueError(f"Path traversal blocked: {raw} resolves outside WORKDIR")
-    return target
-
 
 def truncate(text: str, limit: int = MAX_TOOL_OUTPUT) -> str:
     """截断过长的输出, 并附上提示.
@@ -170,7 +110,6 @@ def truncate(text: str, limit: int = MAX_TOOL_OUTPUT) -> str:
 #   - 这样模型能 "看到" 错误并自行修正 (比如换一个路径重试)
 #   - 如果抛异常, 整个 agent 循环可能崩溃, 模型也没机会纠正
 # ---------------------------------------------------------------------------
-
 
 def tool_bash(command: str, timeout: int = 30) -> str:
     """执行 shell 命令并返回输出.
@@ -228,6 +167,7 @@ def tool_bash(command: str, timeout: int = 30) -> str:
         return f"Error: {exc}"
 
 
+
 def tool_read_file(file_path: str) -> str:
     """读取文件内容.
 
@@ -280,7 +220,6 @@ def tool_write_file(file_path: str, content: str) -> str:
         return str(exc)
     except Exception as exc:
         return f"Error: {exc}"
-
 
 def tool_edit_file(file_path: str, old_string: str, new_string: str) -> str:
     """
@@ -335,6 +274,7 @@ def tool_edit_file(file_path: str, old_string: str, new_string: str) -> str:
         return f"Error: {exc}"
 
 
+
 # ---------------------------------------------------------------------------
 # 工具定义: Schema (传给 API) + Handler 调度表
 # ---------------------------------------------------------------------------
@@ -357,13 +297,14 @@ def tool_edit_file(file_path: str, old_string: str, new_string: str) -> str:
 # └───────────────────────────────────────────────────────────────┘
 #
 # input_schema 遵循 JSON Schema 规范:
-#   type: "object"           -> 参数是一个对象 (即关键字参数)
+#   type: # object          -> 参数是一个对象 (即关键字参数)
 #   properties: {...}        -> 每个参数的名字、类型、描述
 #   required: [...]          -> 哪些参数是必填的
 #
 # 模型会根据 schema 生成符合格式的 tool_input,
 # 我们的代码用 handler(**tool_input) 把它展开为关键字参数调用.
 # ---------------------------------------------------------------------------
+
 
 TOOLS = [
     {
@@ -454,6 +395,7 @@ TOOLS = [
     },
 ]
 
+
 # 调度表: 工具名 -> 处理函数
 # 当模型返回 tool_use block 时, 我们用 block.name 在这里查到对应的函数
 # 然后调用 handler(**block.input) 执行
@@ -509,6 +451,7 @@ def process_tool_call(tool_name: str, tool_input: dict) -> str:
         return f"Error: {tool_name} failed: {exc}"
 
 
+
 # ---------------------------------------------------------------------------
 # 核心: Agent 循环
 # ---------------------------------------------------------------------------
@@ -541,7 +484,6 @@ def process_tool_call(tool_name: str, tool_input: dict) -> str:
 # │    → LLM: "已经修复了!"             [end_turn]                  │
 # └─────────────────────────────────────────────────────────────────┘
 # ---------------------------------------------------------------------------
-
 
 def agent_loop() -> None:
     """主 agent 循环 -- 带工具的 REPL."""
@@ -581,7 +523,7 @@ def agent_loop() -> None:
             "content": user_input,
         })
 
-        # ================================================================
+# ================================================================
         # 内层循环: 处理 LLM 回复 + 工具调用链
         # ================================================================
         # 模型可能连续调用多个工具才最终给出文本回复.

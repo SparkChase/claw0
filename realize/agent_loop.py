@@ -1,67 +1,26 @@
-"""
-Section 01: Agent 循环
-"Agent 就是 while True + stop_reason"
-
-    用户输入 --> [messages[]] --> LLM API --> stop_reason?
-                                               /        \
-                                         "end_turn"  "tool_use"
-                                             |           |
-                                          打印回复    (下一节)
-
-用法:
-    cd claw0
-    python zh/s01_agent_loop.py
-
-需要在 .env 中配置:
-    ANTHROPIC_API_KEY=sk-ant-xxxxx
-    MODEL_ID=claude-sonnet-4-20250514
-"""
-
-# ---------------------------------------------------------------------------
+# yjy i love u
+#==========
 # 导入
-# ---------------------------------------------------------------------------
+#==========
 import os
 import sys
 from pathlib import Path
 
-# dotenv: 从 .env 文件加载环境变量到 os.environ 中
-# 这样就不需要手动 export 环境变量, 直接写在 .env 文件即可
 from dotenv import load_dotenv
 
-# anthropic: Anthropic 官方 Python SDK, 用于调用 Claude API
-# 核心用法: client.messages.create(...) 发送消息并获取回复
-from anthropic import Anthropic
+from anthropic import  Anthropic
 
-# ---------------------------------------------------------------------------
-# 配置
-# ---------------------------------------------------------------------------
 
-# 加载 .env 文件
-# Path(__file__)           -> 当前文件 (s01_agent_loop.py) 的路径
-# .resolve()               -> 转为绝对路径 (消除符号链接等)
-# .parent                  -> zh/ 目录
-# .parent                  -> sessions/ 目录
-# .parent                  -> claw0/ 项目根目录
-# 最终指向 claw0/.env 文件
-# override=True 表示 .env 中的值会覆盖已有的环境变量
-load_dotenv(Path(__file__).resolve().parent.parent.parent / ".env", override=True)
+load_dotenv(Path(__file__).resolve().parent.parent / ".env",override=True)
 
-# 从环境变量读取模型 ID, 如果没设置就默认用 claude-sonnet-4
-MODEL_ID = os.getenv("MODEL_ID", "claude-sonnet-4-20250514")
-
-# 创建 Anthropic 客户端
-# api_key:  认证密钥, 从 .env 中的 ANTHROPIC_API_KEY 读取
-# base_url: API 基础地址, 默认是 Anthropic 官方地址
-#           如果设置了 ANTHROPIC_BASE_URL (比如用了代理/转发), 则用那个地址
-#           如果没设置, os.getenv 返回 None, `or None` 确保空字符串也变成 None
+MODEL_ID = os.getenv("MODEL_ID")
 client = Anthropic(
     api_key=os.getenv("ANTHROPIC_API_KEY"),
     base_url=os.getenv("ANTHROPIC_BASE_URL") or None,
 )
 
-# 系统提示词: 告诉模型 "你是谁", 在整个对话中始终生效
-# 对应 API 参数中的 system 字段, 不放在 messages 数组里
-SYSTEM_PROMPT = "You are a helpful AI assistant. Answer questions directly."
+SYSTEM_PROMPT = "你是trace,你很可爱，永远积极向上，能够跟用户聊很深度的内容，有自己的想法和见解给人启迪"
+
 
 # ---------------------------------------------------------------------------
 # ANSI 颜色
@@ -78,27 +37,27 @@ DIM = "\033[2m"       # 暗淡 -- 用于辅助信息 (版权、提示等)
 RESET = "\033[0m"     # 重置所有样式
 BOLD = "\033[1m"      # 加粗
 
-
-def colored_prompt() -> str:
-    """返回带颜色的用户输入提示符.
-
-    效果: 用青色加粗显示 "You > ", 然后恢复默认样式等待输入.
+def colored_prompt()-> str:
     """
-    return f"{CYAN}{BOLD}You > {RESET}"
-
+    返回带颜色的用户输入提示符：
+    效果：用青色加粗显示 “yjy say > ”，然后恢复默认样式等待输入
+    """
+    return f"{CYAN}{BOLD}yjy say > {RESET}"
 
 def print_assistant(text: str) -> None:
-    """打印助手回复, 用绿色加粗标题 + 正文.
-
-    效果:
-        Assistant: 你好！有什么可以帮你的？
     """
-    print(f"\n{GREEN}{BOLD}Assistant:{RESET} {text}\n")
-
+    打印助手回复：用绿色加粗标题+正文：
+    效果：
+    trace's Assistant： 你好 ！
+    """
+    print(f"\n{GREEN}{BOLD}trace's Assistant:{RESET} {text}\n")
 
 def print_info(text: str) -> None:
     """打印辅助信息, 用暗淡样式 (不太醒目, 适合提示文字)."""
     print(f"{DIM}{text}{RESET}")
+
+
+
 
 
 # ---------------------------------------------------------------------------
@@ -127,35 +86,19 @@ def print_info(text: str) -> None:
 # └─────────────────────────────────────────────────────────┘
 # ---------------------------------------------------------------------------
 
-
 def agent_loop() -> None:
-    """主 agent 循环 -- 对话式 REPL.
-
-    REPL = Read-Eval-Print Loop (读取-求值-打印-循环)
-    这里是: 读取用户输入 -> 调用 LLM 求值 -> 打印回复 -> 循环
     """
+    主agent循环--对话式 REPL
+    read eval print loop
+    """
+    messages: list[dict]=[]
 
-    # messages 列表: 存储整个对话历史
-    # 每条消息是一个 dict, 至少包含 "role" 和 "content"
-    #   role: "user" (用户) / "assistant" (助手) / "system" (系统, 单独传)
-    #   content: 文本内容 (字符串) 或 内容块列表 (content blocks)
-    #
-    # 为什么需要保存历史? 因为 LLM 是无状态的:
-    #   - 每次调用 API, 你必须把之前所有对话都发过去
-    #   - LLM 自己不记得你说过什么, 全靠 messages 数组提供上下文
-    messages: list[dict] = []
-
-    # 打印欢迎信息
-    print_info("=" * 60)
-    print_info("  claw0  |  Section 01: Agent 循环")
+    print_info("="*60)
+    print_info("  yjy  |  Section 01: Agent 循环")
     print_info(f"  Model: {MODEL_ID}")
     print_info("  输入 'quit' 或 'exit' 退出. Ctrl+C 同样有效.")
-    print_info("=" * 60)
-    print()
+    print_info("="*60)
 
-    # ================================================================
-    # ★ 主循环: Agent 的心脏 ★
-    # ================================================================
     while True:
         # --- 获取用户输入 ---
         # input() 会阻塞等待用户输入, 并返回输入的字符串
@@ -225,6 +168,7 @@ def agent_loop() -> None:
         #   end_turn  -> 一轮对话结束, 回到用户输入
         #   tool_use  -> 需要继续循环 (执行工具 -> 再调 API -> 再判断)
         #               (本节暂不处理, 下一节实现)
+
 
         if response.stop_reason == "end_turn":
             # ---- 正常结束: 提取文本, 打印, 存入历史 ----
